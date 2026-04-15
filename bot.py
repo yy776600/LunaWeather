@@ -16,17 +16,17 @@ dp = Dispatcher(storage=MemoryStorage())
 
 WELCOME = (
     "🌤 Привет! Я LunaWeather — твой погодный помощник!\n\n"
-    "Просто напиши название своего города и я покажу погоду:\n\n"
+    "Напиши название города и я пришлю прогноз на сегодня и ближайшие 10 дней:\n\n"
     "Примеры:\n"
     "• Москва\n"
     "• Нальчик\n"
-    "• Нью-Йорк\n"
+    "• Нью-Йорк\n\n"
+    "🌙 Все сервисы Luna: @LunaHub"
 )
 
 WIND_DIR = {
-    "N": "⬆️ Север", "NE": "↗️ Северо-восток", "E": "➡️ Восток",
-    "SE": "↘️ Юго-восток", "S": "⬇️ Юг", "SW": "↙️ Юго-запад",
-    "W": "⬅️ Запад", "NW": "↖️ Северо-запад"
+    "N": "⬆️", "NE": "↗️", "E": "➡️", "SE": "↘️",
+    "S": "⬇️", "SW": "↙️", "W": "⬅️", "NW": "↖️"
 }
 
 
@@ -35,16 +35,22 @@ def get_emoji(code: int) -> str:
     if code in [1003, 1006]: return "⛅"
     if code in [1009]: return "☁️"
     if code in [1030, 1135, 1147]: return "🌫️"
-    if code in [1063, 1150, 1153, 1180, 1183]: return "🌦️"
-    if code in [1186, 1189, 1192, 1195]: return "🌧️"
+    if code in [1063, 1150, 1153, 1180, 1183, 1186, 1189, 1192, 1195]: return "🌧️"
     if code in [1066, 1114, 1117, 1210, 1213, 1216, 1219, 1222, 1225]: return "❄️"
     if code in [1087, 1273, 1276]: return "⛈️"
     return "🌡️"
 
 
-async def get_weather(city: str) -> str:
-    url = "http://api.weatherapi.com/v1/current.json"
-    params = {"key": WEATHER_API, "q": city, "lang": "ru"}
+async def get_forecast(city: str) -> str:
+    url = "http://api.weatherapi.com/v1/forecast.json"
+    params = {
+        "key": WEATHER_API,
+        "q": city,
+        "days": 10,
+        "lang": "ru",
+        "aqi": "no",
+        "alerts": "no",
+    }
 
     async with aiohttp.ClientSession() as session:
         async with session.get(url, params=params) as resp:
@@ -54,29 +60,67 @@ async def get_weather(city: str) -> str:
 
     loc = data["location"]
     cur = data["current"]
+    forecast_days = data["forecast"]["forecastday"]
+
+    city_name = loc["name"]
+    country = loc["country"]
+
+    # Сегодняшняя погода подробно
     code = cur["condition"]["code"]
     emoji = get_emoji(code)
-    desc = cur["condition"]["text"]
     temp = cur["temp_c"]
     feels = cur["feelslike_c"]
     humidity = cur["humidity"]
     wind = cur["wind_kph"]
-    wind_dir = WIND_DIR.get(cur["wind_dir"], cur["wind_dir"])
+    wind_dir = WIND_DIR.get(cur["wind_dir"], "")
+    desc = cur["condition"]["text"]
     pressure = round(cur["pressure_mb"] * 0.750064)
-    uv = cur["uv"]
-    city_name = loc["name"]
-    country = loc["country"]
 
-    return (
-        f"{emoji} <b>Погода в {city_name}, {country}</b>\n\n"
-        f"🌡 Температура: <b>{temp:+.0f}°C</b>\n"
-        f"🤔 Ощущается как: <b>{feels:+.0f}°C</b>\n"
-        f"📋 {desc}\n\n"
-        f"💧 Влажность: <b>{humidity}%</b>\n"
-        f"💨 Ветер: <b>{wind} км/ч</b> {wind_dir}\n"
-        f"🔘 Давление: <b>{pressure} мм рт.ст.</b>\n"
-        f"☀️ УФ-индекс: <b>{uv}</b>"
-    )
+    lines = [
+        f"📍 <b>{city_name}, {country}</b>",
+        f"",
+        f"{emoji} <b>Сейчас: {temp:+.0f}°C</b> — {desc}",
+        f"🤔 Ощущается как {feels:+.0f}°C",
+        f"💧 Влажность: {humidity}% | 💨 Ветер: {wind_dir} {wind} км/ч",
+        f"🔘 Давление: {pressure} мм рт.ст.",
+        f"",
+        f"<b>📅 Прогноз на 10 дней:</b>",
+    ]
+
+    # Прогноз по дням
+    days_ru = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    months_ru = ["", "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+
+    for i, day in enumerate(forecast_days):
+        date_parts = day["date"].split("-")
+        month = int(date_parts[1])
+        d = int(date_parts[2])
+
+        import datetime
+        dt = datetime.date(int(date_parts[0]), month, d)
+        day_name = days_ru[dt.weekday()]
+
+        day_data = day["day"]
+        max_t = day_data["maxtemp_c"]
+        min_t = day_data["mintemp_c"]
+        day_code = day_data["condition"]["code"]
+        day_emoji = get_emoji(day_code)
+        rain_chance = day_data.get("daily_chance_of_rain", 0)
+
+        if i == 0:
+            prefix = "Сегодня  "
+        elif i == 1:
+            prefix = "Завтра    "
+        else:
+            prefix = f"{day_name} {d} {months_ru[month]}  "
+
+        rain_str = f" 💧{rain_chance}%" if rain_chance > 20 else ""
+        lines.append(f"{day_emoji} <b>{prefix}</b> {max_t:+.0f}° / {min_t:+.0f}°{rain_str}")
+
+    lines.append("")
+    lines.append("🌙 <i>LunaWeather • @LunaHub</i>")
+
+    return "\n".join(lines)
 
 
 @dp.message(CommandStart())
@@ -87,9 +131,9 @@ async def cmd_start(msg: Message):
 @dp.message(F.text)
 async def handle_city(msg: Message):
     city = msg.text.strip()
-    wait = await msg.answer("🔍 Ищу погоду...")
+    wait = await msg.answer("🔍 Загружаю прогноз...")
 
-    result = await get_weather(city)
+    result = await get_forecast(city)
     await wait.delete()
 
     if not result:
