@@ -20,9 +20,31 @@ WELCOME = (
     "Напиши название города и получишь:\n"
     "• Подробную погоду прямо сейчас\n"
     "• Прогноз на каждый из 10 дней\n\n"
-    "Примеры: Москва, Нальчик, Dubai\n\n"
+    "Примеры: Москва, Нальчик, Грозный\n\n"
     "🌙 Все сервисы: @LunaHub"
 )
+
+# Российские города у которых есть двойники в других странах
+RU_CITIES = {
+    "грозный", "владикавказ", "махачкала", "нальчик", "черкесск",
+    "майкоп", "элиста", "магас", "назрань", "сунжа", "гудермес",
+    "аргун", "шали", "урус-мартан", "новороссийск", "сочи", "краснодар",
+    "ставрополь", "пятигорск", "кисловодск", "ессентуки", "минеральные воды",
+    "анапа", "геленджик", "темрюк", "белореченск", "армавир",
+    "самара", "саратов", "волгоград", "астрахань", "ростов",
+    "воронеж", "липецк", "тамбов", "пенза", "ульяновск",
+    "казань", "уфа", "оренбург", "пермь", "ижевск", "чебоксары",
+    "йошкар-ола", "саранск", "киров", "нижний новгород",
+    "екатеринбург", "челябинск", "тюмень", "курган", "тобольск",
+    "новосибирск", "омск", "томск", "барнаул", "кемерово", "новокузнецк",
+    "красноярск", "иркутск", "улан-удэ", "чита", "хабаровск", "владивосток",
+    "москва", "санкт-петербург", "мурманск", "архангельск", "вологда",
+    "ярославль", "кострома", "иваново", "владимир", "рязань", "тула",
+    "калуга", "орел", "брянск", "смоленск", "тверь", "псков", "новгород",
+    "петрозаводск", "сыктывкар", "нарьян-мар", "салехард", "ханты-мансийск",
+    "якутск", "магадан", "петропавловск-камчатский", "южно-сахалинск",
+    "благовещенск", "биробиджан", "калининград",
+}
 
 DAYS_RU = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
 MONTHS_RU = ["", "января", "февраля", "марта", "апреля", "мая", "июня",
@@ -44,7 +66,6 @@ def get_emoji(code: int) -> str:
     if code in [1186, 1189, 1192, 1195, 1198, 1201]: return "🌧️"
     if code in [1066, 1114, 1117, 1210, 1213, 1216, 1219, 1222, 1225]: return "❄️"
     if code in [1087, 1273, 1276, 1279, 1282]: return "⛈️"
-    if code in [1237, 1261, 1264]: return "🌨️"
     return "🌡️"
 
 
@@ -56,9 +77,17 @@ def uv_desc(uv: float) -> str:
     return "Экстремальный"
 
 
-async def get_forecast(city: str) -> tuple[str, str] | tuple[None, None]:
+def prepare_query(city: str) -> str:
+    """Добавляем Россия для городов у которых есть двойники."""
+    if city.lower() in RU_CITIES:
+        return f"{city}, Россия"
+    return city
+
+
+async def get_forecast(city: str) -> tuple:
+    query = prepare_query(city)
     url = "http://api.weatherapi.com/v1/forecast.json"
-    params = {"key": WEATHER_API, "q": city, "days": 10, "lang": "ru", "aqi": "no"}
+    params = {"key": WEATHER_API, "q": query, "days": 10, "lang": "ru", "aqi": "no"}
 
     async with aiohttp.ClientSession() as session:
         async with session.get(url, params=params) as resp:
@@ -74,7 +103,6 @@ async def get_forecast(city: str) -> tuple[str, str] | tuple[None, None]:
     country = loc["country"]
     local_time = loc["localtime"].split(" ")[1]
 
-    # ── Текущая погода ────────────────────────────────────────────────────
     code = cur["condition"]["code"]
     emoji = get_emoji(code)
     temp = cur["temp_c"]
@@ -87,14 +115,12 @@ async def get_forecast(city: str) -> tuple[str, str] | tuple[None, None]:
     uv = cur["uv"]
     desc = cur["condition"]["text"]
     cloud = cur["cloud"]
-
-    today = days[0]["day"]
     sunrise = days[0]["astro"]["sunrise"]
     sunset = days[0]["astro"]["sunset"]
 
     now_text = (
         f"📍 <b>{city_name}, {country}</b>  🕐 {local_time}\n"
-        f"{'─' * 30}\n"
+        f"{'─' * 28}\n"
         f"{emoji} <b>{temp:+.0f}°C</b>  •  {desc}\n"
         f"🤔 Ощущается: <b>{feels:+.0f}°C</b>\n"
         f"💧 Влажность: <b>{humidity}%</b>\n"
@@ -102,16 +128,14 @@ async def get_forecast(city: str) -> tuple[str, str] | tuple[None, None]:
         f"🔘 Давление: <b>{pressure} мм рт.ст.</b>\n"
         f"👁 Видимость: <b>{visibility} км</b>\n"
         f"☁️ Облачность: <b>{cloud}%</b>\n"
-        f"🌞 УФ-индекс: <b>{uv:.0f}</b> — {uv_desc(uv)}\n"
-        f"🌅 Восход: <b>{sunrise}</b>  🌇 Закат: <b>{sunset}</b>\n"
+        f"☀️ УФ: <b>{uv:.0f}</b> — {uv_desc(uv)}\n"
+        f"🌅 {sunrise}  🌇 {sunset}"
     )
 
-    # ── Прогноз на 10 дней ────────────────────────────────────────────────
-    forecast_text = f"📅 <b>Прогноз на 10 дней — {city_name}</b>\n{'─' * 30}\n"
+    forecast_text = f"📅 <b>Прогноз на 10 дней — {city_name}</b>\n{'─' * 28}\n"
 
     for i, day in enumerate(days):
-        date_str = day["date"]
-        y, m, d = map(int, date_str.split("-"))
+        y, m, d = map(int, day["date"].split("-"))
         dt = datetime.date(y, m, d)
         day_name = DAYS_RU[dt.weekday()]
         month_name = MONTHS_RU[m]
@@ -126,39 +150,25 @@ async def get_forecast(city: str) -> tuple[str, str] | tuple[None, None]:
         humidity_avg = dd["avghumidity"]
         uv_day = dd["uv"]
         day_desc = dd["condition"]["text"]
-        day_code = dd["condition"]["code"]
-        day_emoji = get_emoji(day_code)
+        day_emoji = get_emoji(dd["condition"]["code"])
+        sr = day["astro"]["sunrise"]
+        ss = day["astro"]["sunset"]
 
-        astro = day["astro"]
-        sr = astro["sunrise"]
-        ss = astro["sunset"]
-
-        if i == 0:
-            label = "Сегодня"
-        elif i == 1:
-            label = "Завтра"
-        else:
-            label = f"{day_name}"
-
-        precip = ""
-        if snow > 20:
-            precip = f"🌨 Снег: {snow}%"
-        elif rain > 20:
-            precip = f"🌧 Дождь: {rain}%"
+        label = "Сегодня" if i == 0 else "Завтра" if i == 1 else day_name
+        precip = f"🌨 Снег: {snow}%" if snow > 20 else (f"🌧 Дождь: {rain}%" if rain > 20 else "")
 
         forecast_text += (
             f"\n{day_emoji} <b>{label}, {d} {month_name}</b>\n"
             f"🌡 {max_t:+.0f}° / {min_t:+.0f}°  •  {day_desc}\n"
-            f"🌡 Средняя: {avg_t:+.0f}°C\n"
-            f"💨 Ветер до {wind_max:.0f} км/ч  •  💧 Влажность {humidity_avg:.0f}%\n"
-            f"☀️ УФ: {uv_day:.0f}  •  🌅 {sr}  🌇 {ss}\n"
+            f"🌡 Средняя: {avg_t:+.0f}°  •  ☀️ УФ: {uv_day:.0f}\n"
+            f"💨 до {wind_max:.0f} км/ч  •  💧 {humidity_avg:.0f}%\n"
+            f"🌅 {sr}  🌇 {ss}\n"
         )
         if precip:
             forecast_text += f"{precip}\n"
-        forecast_text += "─" * 30 + "\n"
+        forecast_text += "─" * 28 + "\n"
 
     forecast_text += "\n🌙 <i>LunaWeather • @LunaHub</i>"
-
     return now_text, forecast_text
 
 
@@ -171,15 +181,11 @@ async def cmd_start(msg: Message):
 async def handle_city(msg: Message):
     city = msg.text.strip()
     wait = await msg.answer("🔍 Загружаю прогноз...")
-
     now_text, forecast_text = await get_forecast(city)
     await wait.delete()
-
     if not now_text:
-        await msg.answer("❌ Город не найден. Проверь название и попробуй ещё раз.")
+        await msg.answer("❌ Город не найден. Попробуй написать по-другому.")
         return
-
-    # Отправляем двумя сообщениями — сейчас и прогноз
     await msg.answer(now_text, parse_mode="HTML")
     await msg.answer(forecast_text, parse_mode="HTML")
 
