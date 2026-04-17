@@ -67,7 +67,7 @@ async def fetch_weather(query: str) -> dict | None:
 
 async def get_forecast(city: str) -> tuple:
     # Сначала пробуем с Россией
-    data = await fetch_weather(f"{city}, Russia")
+    data = await fetch_weather(f"{city}, RU")
     # Если не нашли — пробуем без страны
     if not data:
         data = await fetch_weather(city)
