@@ -21,6 +21,8 @@ WELCOME = (
     "• Подробную погоду прямо сейчас\n"
     "• Прогноз на каждый из 10 дней\n\n"
     "Примеры: Москва, Нальчик, Грозный\n\n"
+    "Если бот показывает не тот город — добавь страну:\n"
+    "Например: <code>Грозный Россия</code>\n\n"
     "🌙 Все сервисы: @LunaHub"
 )
 
@@ -33,6 +35,18 @@ WIND_DIR = {
     "W": "⬅️ Запад", "NW": "↖️ Северо-запад"
 }
 
+# Города у которых точно есть двойники — добавляем "Чечня" или "Кабардино-Балкария" для уточнения
+CITY_FIXES = {
+    "грозный": "Grozny, Chechnya",
+    "нальчик": "Nalchik, Kabardino-Balkaria",
+    "владикавказ": "Vladikavkaz, North Ossetia",
+    "махачкала": "Makhachkala, Dagestan",
+    "черкесск": "Cherkessk, Karachay-Cherkessia",
+    "майкоп": "Maykop, Adygea",
+    "элиста": "Elista, Kalmykia",
+    "магас": "Magas, Ingushetia",
+}
+
 
 def get_emoji(code: int) -> str:
     if code == 1000: return "☀️"
@@ -41,9 +55,9 @@ def get_emoji(code: int) -> str:
     if code in [1009]: return "☁️"
     if code in [1030, 1135, 1147]: return "🌫️"
     if code in [1063, 1150, 1153, 1180, 1183]: return "🌦️"
-    if code in [1186, 1189, 1192, 1195, 1198, 1201]: return "🌧️"
+    if code in [1186, 1189, 1192, 1195]: return "🌧️"
     if code in [1066, 1114, 1117, 1210, 1213, 1216, 1219, 1222, 1225]: return "❄️"
-    if code in [1087, 1273, 1276, 1279, 1282]: return "⛈️"
+    if code in [1087, 1273, 1276]: return "⛈️"
     return "🌡️"
 
 
@@ -66,11 +80,9 @@ async def fetch_weather(query: str) -> dict | None:
 
 
 async def get_forecast(city: str) -> tuple:
-    # Сначала пробуем с Россией
-    data = await fetch_weather(f"{city}, RU")
-    # Если не нашли — пробуем без страны
-    if not data:
-        data = await fetch_weather(city)
+    # Проверяем есть ли город в списке исправлений
+    fixed = CITY_FIXES.get(city.lower())
+    data = await fetch_weather(fixed if fixed else city)
     if not data:
         return None, None
 
@@ -80,10 +92,10 @@ async def get_forecast(city: str) -> tuple:
 
     city_name = loc["name"]
     country = loc["country"]
+    region = loc.get("region", "")
     local_time = loc["localtime"].split(" ")[1]
 
     code = cur["condition"]["code"]
-    emoji = get_emoji(code)
     temp = cur["temp_c"]
     feels = cur["feelslike_c"]
     humidity = cur["humidity"]
@@ -97,10 +109,12 @@ async def get_forecast(city: str) -> tuple:
     sunrise = days[0]["astro"]["sunrise"]
     sunset = days[0]["astro"]["sunset"]
 
+    location_str = f"{city_name}, {region}, {country}" if region else f"{city_name}, {country}"
+
     now_text = (
-        f"📍 <b>{city_name}, {country}</b>  🕐 {local_time}\n"
+        f"📍 <b>{location_str}</b>  🕐 {local_time}\n"
         f"{'─' * 28}\n"
-        f"{emoji} <b>{temp:+.0f}°C</b>  •  {desc}\n"
+        f"{get_emoji(code)} <b>{temp:+.0f}°C</b>  •  {desc}\n"
         f"🤔 Ощущается: <b>{feels:+.0f}°C</b>\n"
         f"💧 Влажность: <b>{humidity}%</b>\n"
         f"💨 Ветер: <b>{wind_kph:.0f} км/ч</b> {wind_dir}\n"
@@ -111,47 +125,35 @@ async def get_forecast(city: str) -> tuple:
         f"🌅 {sunrise}  🌇 {sunset}"
     )
 
-    forecast_text = f"📅 <b>Прогноз на 10 дней — {city_name}</b>\n{'─' * 28}\n"
+    forecast_text = f"📅 <b>Прогноз — {city_name}</b>\n{'─' * 28}\n"
 
     for i, day in enumerate(days):
         y, m, d = map(int, day["date"].split("-"))
         dt = datetime.date(y, m, d)
-        day_name = DAYS_RU[dt.weekday()]
-        month_name = MONTHS_RU[m]
         dd = day["day"]
-        max_t = dd["maxtemp_c"]
-        min_t = dd["mintemp_c"]
-        avg_t = dd["avgtemp_c"]
+        label = "Сегодня" if i == 0 else "Завтра" if i == 1 else DAYS_RU[dt.weekday()]
         rain = dd.get("daily_chance_of_rain", 0)
         snow = dd.get("daily_chance_of_snow", 0)
-        wind_max = dd["maxwind_kph"]
-        humidity_avg = dd["avghumidity"]
-        uv_day = dd["uv"]
-        day_desc = dd["condition"]["text"]
-        day_emoji = get_emoji(dd["condition"]["code"])
-        sr = day["astro"]["sunrise"]
-        ss = day["astro"]["sunset"]
-        label = "Сегодня" if i == 0 else "Завтра" if i == 1 else day_name
         precip = f"🌨 Снег: {snow}%" if snow > 20 else (f"🌧 Дождь: {rain}%" if rain > 20 else "")
 
         forecast_text += (
-            f"\n{day_emoji} <b>{label}, {d} {month_name}</b>\n"
-            f"🌡 {max_t:+.0f}° / {min_t:+.0f}°  •  {day_desc}\n"
-            f"🌡 Средняя: {avg_t:+.0f}°  •  ☀️ УФ: {uv_day:.0f}\n"
-            f"💨 до {wind_max:.0f} км/ч  •  💧 {humidity_avg:.0f}%\n"
-            f"🌅 {sr}  🌇 {ss}\n"
+            f"\n{get_emoji(dd['condition']['code'])} <b>{label}, {d} {MONTHS_RU[m]}</b>\n"
+            f"🌡 {dd['maxtemp_c']:+.0f}° / {dd['mintemp_c']:+.0f}°  •  {dd['condition']['text']}\n"
+            f"🌡 Средняя: {dd['avgtemp_c']:+.0f}°  •  ☀️ УФ: {dd['uv']:.0f}\n"
+            f"💨 до {dd['maxwind_kph']:.0f} км/ч  •  💧 {dd['avghumidity']:.0f}%\n"
+            f"🌅 {day['astro']['sunrise']}  🌇 {day['astro']['sunset']}\n"
         )
         if precip:
             forecast_text += f"{precip}\n"
         forecast_text += "─" * 28 + "\n"
 
-    forecast_text += "\n🌙 <i>LunaWeather • @LunaHub</i>"
+    forecast_text += "\n🌙 <i>LunaWeather • @LunaaHubb</i>\n\n<i>Если показан не тот город — напиши на английском с добавлением Russia\nНапример: Grozny Russia</i>"
     return now_text, forecast_text
 
 
 @dp.message(CommandStart())
 async def cmd_start(msg: Message):
-    await msg.answer(WELCOME)
+    await msg.answer(WELCOME, parse_mode="HTML")
 
 
 @dp.message(F.text)
