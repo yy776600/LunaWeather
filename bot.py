@@ -24,28 +24,6 @@ WELCOME = (
     "🌙 Все сервисы: @LunaHub"
 )
 
-# Российские города у которых есть двойники в других странах
-RU_CITIES = {
-    "грозный", "владикавказ", "махачкала", "нальчик", "черкесск",
-    "майкоп", "элиста", "магас", "назрань", "сунжа", "гудермес",
-    "аргун", "шали", "урус-мартан", "новороссийск", "сочи", "краснодар",
-    "ставрополь", "пятигорск", "кисловодск", "ессентуки", "минеральные воды",
-    "анапа", "геленджик", "темрюк", "белореченск", "армавир",
-    "самара", "саратов", "волгоград", "астрахань", "ростов",
-    "воронеж", "липецк", "тамбов", "пенза", "ульяновск",
-    "казань", "уфа", "оренбург", "пермь", "ижевск", "чебоксары",
-    "йошкар-ола", "саранск", "киров", "нижний новгород",
-    "екатеринбург", "челябинск", "тюмень", "курган", "тобольск",
-    "новосибирск", "омск", "томск", "барнаул", "кемерово", "новокузнецк",
-    "красноярск", "иркутск", "улан-удэ", "чита", "хабаровск", "владивосток",
-    "москва", "санкт-петербург", "мурманск", "архангельск", "вологда",
-    "ярославль", "кострома", "иваново", "владимир", "рязань", "тула",
-    "калуга", "орел", "брянск", "смоленск", "тверь", "псков", "новгород",
-    "петрозаводск", "сыктывкар", "нарьян-мар", "салехард", "ханты-мансийск",
-    "якутск", "магадан", "петропавловск-камчатский", "южно-сахалинск",
-    "благовещенск", "биробиджан", "калининград",
-}
-
 DAYS_RU = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
 MONTHS_RU = ["", "января", "февраля", "марта", "апреля", "мая", "июня",
              "июля", "августа", "сентября", "октября", "ноября", "декабря"]
@@ -77,23 +55,24 @@ def uv_desc(uv: float) -> str:
     return "Экстремальный"
 
 
-def prepare_query(city: str) -> str:
-    """Добавляем Россия для городов у которых есть двойники."""
-    if city.lower() in RU_CITIES:
-        return f"{city}, Россия"
-    return city
-
-
-async def get_forecast(city: str) -> tuple:
-    query = prepare_query(city)
+async def fetch_weather(query: str) -> dict | None:
     url = "http://api.weatherapi.com/v1/forecast.json"
     params = {"key": WEATHER_API, "q": query, "days": 10, "lang": "ru", "aqi": "no"}
-
     async with aiohttp.ClientSession() as session:
         async with session.get(url, params=params) as resp:
             if resp.status == 400:
-                return None, None
-            data = await resp.json()
+                return None
+            return await resp.json()
+
+
+async def get_forecast(city: str) -> tuple:
+    # Сначала пробуем с Россией
+    data = await fetch_weather(f"{city}, Russia")
+    # Если не нашли — пробуем без страны
+    if not data:
+        data = await fetch_weather(city)
+    if not data:
+        return None, None
 
     loc = data["location"]
     cur = data["current"]
@@ -139,7 +118,6 @@ async def get_forecast(city: str) -> tuple:
         dt = datetime.date(y, m, d)
         day_name = DAYS_RU[dt.weekday()]
         month_name = MONTHS_RU[m]
-
         dd = day["day"]
         max_t = dd["maxtemp_c"]
         min_t = dd["mintemp_c"]
@@ -153,7 +131,6 @@ async def get_forecast(city: str) -> tuple:
         day_emoji = get_emoji(dd["condition"]["code"])
         sr = day["astro"]["sunrise"]
         ss = day["astro"]["sunset"]
-
         label = "Сегодня" if i == 0 else "Завтра" if i == 1 else day_name
         precip = f"🌨 Снег: {snow}%" if snow > 20 else (f"🌧 Дождь: {rain}%" if rain > 20 else "")
 
