@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import datetime
 import aiohttp
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
@@ -15,112 +16,150 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 WELCOME = (
-    "🌤 Привет! Я LunaWeather — твой погодный помощник!\n\n"
-    "Напиши название города и я пришлю прогноз на сегодня и ближайшие 10 дней:\n\n"
-    "Примеры:\n"
-    "• Москва\n"
-    "• Нальчик\n"
-    "• Нью-Йорк\n\n"
-    "🌙 Все сервисы Luna: @LunaHub"
+    "🌤 Привет! Я LunaWeather!\n\n"
+    "Напиши название города и получишь:\n"
+    "• Подробную погоду прямо сейчас\n"
+    "• Прогноз на каждый из 10 дней\n\n"
+    "Примеры: Москва, Нальчик, Dubai\n\n"
+    "🌙 Все сервисы: @LunaHub"
 )
 
+DAYS_RU = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+MONTHS_RU = ["", "января", "февраля", "марта", "апреля", "мая", "июня",
+             "июля", "августа", "сентября", "октября", "ноября", "декабря"]
 WIND_DIR = {
-    "N": "⬆️", "NE": "↗️", "E": "➡️", "SE": "↘️",
-    "S": "⬇️", "SW": "↙️", "W": "⬅️", "NW": "↖️"
+    "N": "⬆️ Север", "NE": "↗️ Северо-восток", "E": "➡️ Восток",
+    "SE": "↘️ Юго-восток", "S": "⬇️ Юг", "SW": "↙️ Юго-запад",
+    "W": "⬅️ Запад", "NW": "↖️ Северо-запад"
 }
 
 
 def get_emoji(code: int) -> str:
     if code == 1000: return "☀️"
-    if code in [1003, 1006]: return "⛅"
+    if code in [1003]: return "🌤"
+    if code in [1006]: return "⛅"
     if code in [1009]: return "☁️"
     if code in [1030, 1135, 1147]: return "🌫️"
-    if code in [1063, 1150, 1153, 1180, 1183, 1186, 1189, 1192, 1195]: return "🌧️"
+    if code in [1063, 1150, 1153, 1180, 1183]: return "🌦️"
+    if code in [1186, 1189, 1192, 1195, 1198, 1201]: return "🌧️"
     if code in [1066, 1114, 1117, 1210, 1213, 1216, 1219, 1222, 1225]: return "❄️"
-    if code in [1087, 1273, 1276]: return "⛈️"
+    if code in [1087, 1273, 1276, 1279, 1282]: return "⛈️"
+    if code in [1237, 1261, 1264]: return "🌨️"
     return "🌡️"
 
 
-async def get_forecast(city: str) -> str:
+def uv_desc(uv: float) -> str:
+    if uv <= 2: return "Низкий"
+    if uv <= 5: return "Умеренный"
+    if uv <= 7: return "Высокий"
+    if uv <= 10: return "Очень высокий"
+    return "Экстремальный"
+
+
+async def get_forecast(city: str) -> tuple[str, str] | tuple[None, None]:
     url = "http://api.weatherapi.com/v1/forecast.json"
-    params = {
-        "key": WEATHER_API,
-        "q": city,
-        "days": 10,
-        "lang": "ru",
-        "aqi": "no",
-        "alerts": "no",
-    }
+    params = {"key": WEATHER_API, "q": city, "days": 10, "lang": "ru", "aqi": "no"}
 
     async with aiohttp.ClientSession() as session:
         async with session.get(url, params=params) as resp:
             if resp.status == 400:
-                return None
+                return None, None
             data = await resp.json()
 
     loc = data["location"]
     cur = data["current"]
-    forecast_days = data["forecast"]["forecastday"]
+    days = data["forecast"]["forecastday"]
 
     city_name = loc["name"]
     country = loc["country"]
+    local_time = loc["localtime"].split(" ")[1]
 
-    # Сегодняшняя погода подробно
+    # ── Текущая погода ────────────────────────────────────────────────────
     code = cur["condition"]["code"]
     emoji = get_emoji(code)
     temp = cur["temp_c"]
     feels = cur["feelslike_c"]
     humidity = cur["humidity"]
-    wind = cur["wind_kph"]
-    wind_dir = WIND_DIR.get(cur["wind_dir"], "")
-    desc = cur["condition"]["text"]
+    wind_kph = cur["wind_kph"]
+    wind_dir = WIND_DIR.get(cur["wind_dir"], cur["wind_dir"])
     pressure = round(cur["pressure_mb"] * 0.750064)
+    visibility = cur["vis_km"]
+    uv = cur["uv"]
+    desc = cur["condition"]["text"]
+    cloud = cur["cloud"]
 
-    lines = [
-        f"📍 <b>{city_name}, {country}</b>",
-        f"",
-        f"{emoji} <b>Сейчас: {temp:+.0f}°C</b> — {desc}",
-        f"🤔 Ощущается как {feels:+.0f}°C",
-        f"💧 Влажность: {humidity}% | 💨 Ветер: {wind_dir} {wind} км/ч",
-        f"🔘 Давление: {pressure} мм рт.ст.",
-        f"",
-        f"<b>📅 Прогноз на 10 дней:</b>",
-    ]
+    today = days[0]["day"]
+    sunrise = days[0]["astro"]["sunrise"]
+    sunset = days[0]["astro"]["sunset"]
 
-    # Прогноз по дням
-    days_ru = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-    months_ru = ["", "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+    now_text = (
+        f"📍 <b>{city_name}, {country}</b>  🕐 {local_time}\n"
+        f"{'─' * 30}\n"
+        f"{emoji} <b>{temp:+.0f}°C</b>  •  {desc}\n"
+        f"🤔 Ощущается: <b>{feels:+.0f}°C</b>\n"
+        f"💧 Влажность: <b>{humidity}%</b>\n"
+        f"💨 Ветер: <b>{wind_kph:.0f} км/ч</b> {wind_dir}\n"
+        f"🔘 Давление: <b>{pressure} мм рт.ст.</b>\n"
+        f"👁 Видимость: <b>{visibility} км</b>\n"
+        f"☁️ Облачность: <b>{cloud}%</b>\n"
+        f"🌞 УФ-индекс: <b>{uv:.0f}</b> — {uv_desc(uv)}\n"
+        f"🌅 Восход: <b>{sunrise}</b>  🌇 Закат: <b>{sunset}</b>\n"
+    )
 
-    for i, day in enumerate(forecast_days):
-        date_parts = day["date"].split("-")
-        month = int(date_parts[1])
-        d = int(date_parts[2])
+    # ── Прогноз на 10 дней ────────────────────────────────────────────────
+    forecast_text = f"📅 <b>Прогноз на 10 дней — {city_name}</b>\n{'─' * 30}\n"
 
-        import datetime
-        dt = datetime.date(int(date_parts[0]), month, d)
-        day_name = days_ru[dt.weekday()]
+    for i, day in enumerate(days):
+        date_str = day["date"]
+        y, m, d = map(int, date_str.split("-"))
+        dt = datetime.date(y, m, d)
+        day_name = DAYS_RU[dt.weekday()]
+        month_name = MONTHS_RU[m]
 
-        day_data = day["day"]
-        max_t = day_data["maxtemp_c"]
-        min_t = day_data["mintemp_c"]
-        day_code = day_data["condition"]["code"]
+        dd = day["day"]
+        max_t = dd["maxtemp_c"]
+        min_t = dd["mintemp_c"]
+        avg_t = dd["avgtemp_c"]
+        rain = dd.get("daily_chance_of_rain", 0)
+        snow = dd.get("daily_chance_of_snow", 0)
+        wind_max = dd["maxwind_kph"]
+        humidity_avg = dd["avghumidity"]
+        uv_day = dd["uv"]
+        day_desc = dd["condition"]["text"]
+        day_code = dd["condition"]["code"]
         day_emoji = get_emoji(day_code)
-        rain_chance = day_data.get("daily_chance_of_rain", 0)
+
+        astro = day["astro"]
+        sr = astro["sunrise"]
+        ss = astro["sunset"]
 
         if i == 0:
-            prefix = "Сегодня  "
+            label = "Сегодня"
         elif i == 1:
-            prefix = "Завтра    "
+            label = "Завтра"
         else:
-            prefix = f"{day_name} {d} {months_ru[month]}  "
+            label = f"{day_name}"
 
-        rain_str = f" 💧{rain_chance}%" if rain_chance > 20 else ""
-        lines.append(f"{day_emoji} <b>{prefix}</b> {max_t:+.0f}° / {min_t:+.0f}°{rain_str}")
+        precip = ""
+        if snow > 20:
+            precip = f"🌨 Снег: {snow}%"
+        elif rain > 20:
+            precip = f"🌧 Дождь: {rain}%"
 
-    lines.append("")
-    lines.append("🌙 <i>LunaWeather • @LunaHub</i>")
+        forecast_text += (
+            f"\n{day_emoji} <b>{label}, {d} {month_name}</b>\n"
+            f"🌡 {max_t:+.0f}° / {min_t:+.0f}°  •  {day_desc}\n"
+            f"🌡 Средняя: {avg_t:+.0f}°C\n"
+            f"💨 Ветер до {wind_max:.0f} км/ч  •  💧 Влажность {humidity_avg:.0f}%\n"
+            f"☀️ УФ: {uv_day:.0f}  •  🌅 {sr}  🌇 {ss}\n"
+        )
+        if precip:
+            forecast_text += f"{precip}\n"
+        forecast_text += "─" * 30 + "\n"
 
-    return "\n".join(lines)
+    forecast_text += "\n🌙 <i>LunaWeather • @LunaHub</i>"
+
+    return now_text, forecast_text
 
 
 @dp.message(CommandStart())
@@ -133,14 +172,16 @@ async def handle_city(msg: Message):
     city = msg.text.strip()
     wait = await msg.answer("🔍 Загружаю прогноз...")
 
-    result = await get_forecast(city)
+    now_text, forecast_text = await get_forecast(city)
     await wait.delete()
 
-    if not result:
+    if not now_text:
         await msg.answer("❌ Город не найден. Проверь название и попробуй ещё раз.")
         return
 
-    await msg.answer(result, parse_mode="HTML")
+    # Отправляем двумя сообщениями — сейчас и прогноз
+    await msg.answer(now_text, parse_mode="HTML")
+    await msg.answer(forecast_text, parse_mode="HTML")
 
 
 async def main():
